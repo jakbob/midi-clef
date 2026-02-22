@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time MIDI Visualizer</title>
+    <!-- Tailwind CSS for minimalist styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- VexFlow for professional music notation -->
+    <script src="https://cdn.jsdelivr.net/npm/vexflow@4.2.2/build/cjs/vexflow.js"></script>
+    <style>
+        /* Base styles */
+        body {
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        /* VexFlow Container Styling */
+        #vf-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            max-width: 600px;
+            margin: 0 auto;
+            /* Prevent any layout shifts when notes are added */
+            min-height: 350px; 
+        }
+
+        /* Adaptive Dark Mode for VexFlow SVG */
+        @media (prefers-color-scheme: dark) {
+            body {
+                background-color: #121212;
+                color: #e0e0e0;
+            }
+            /* Invert the black sheet music to a soft white/gray in dark mode */
+            #vf-container svg {
+                filter: invert(0.9) hue-rotate(180deg);
+            }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center font-sans antialiased p-4">
+
+    <div class="max-w-2xl w-full flex flex-col items-center gap-6">
+        <!-- Header & Controls -->
+        <div class="text-center">
+            <h1 class="text-3xl font-bold mb-2 tracking-tight">MIDI Visualizer</h1>
+            <p id="status-text" class="text-sm opacity-70 mb-4">Awaiting connection...</p>
+            <button id="connect-btn" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-full shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-[#121212]">
+                Connect MIDI
+            </button>
+        </div>
+
+        <!-- Sheet Music Render Area -->
+        <div id="vf-container"></div>
+    </div>
+
+    <script>
+        // --- State Management ---
+        const activeNotes = new Set();
+        let vexRenderer = null;
+        let vexContext = null;
+
+        // --- DOM Elements ---
+        const statusText = document.getElementById('status-text');
+        const connectBtn = document.getElementById('connect-btn');
+        const vfContainer = document.getElementById('vf-container');
+
+        // --- MIDI Note Mapping ---
+        const NOTE_NAMES = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b'];
+
+        // Convert MIDI note number to VexFlow note string (e.g., 60 -> "c/4")
+        function getVexNoteInfo(midiNumber) {
+            const noteName = NOTE_NAMES[midiNumber % 12];
+            const octave = Math.floor(midiNumber / 12) - 1;
+            return {
+                key: `${noteName}/${octave}`,
+                accidental: noteName.includes('#') ? '#' : null
+            };
+        }
+
+        // --- VexFlow Rendering ---
+        function initVexFlow() {
+            vfContainer.innerHTML = ''; // Clear container
+            const VF = Vex.Flow;
+            vexRenderer = new VF.Renderer(vfContainer, VF.Renderer.Backends.SVG);
+            vexRenderer.resize(500, 350);
+            vexContext = vexRenderer.getContext();
+            drawStaff();
+        }
+
+        function drawStaff() {
+            // Clear the SVG context completely for zero-latency redrawing
+            vexContext.clear();
+
+            const VF = Vex.Flow;
+            
+            // Create staves
+            const trebleStave = new VF.Stave(50, 40, 400).addClef('treble');
+            const bassStave = new VF.Stave(50, 160, 400).addClef('bass');
+
+            // Create Grand Staff connectors
+            const brace = new VF.StaveConnector(trebleStave, bassStave).setType(3);
+            const lineLeft = new VF.StaveConnector(trebleStave, bassStave).setType(1);
+            const lineRight = new VF.StaveConnector(trebleStave, bassStave).setType(6);
+
+            // Draw staves and connectors
+            trebleStave.setContext(vexContext).draw();
+            bassStave.setContext(vexContext).draw();
+            brace.setContext(vexContext).draw();
+            lineLeft.setContext(vexContext).draw();
+            lineRight.setContext(vexContext).draw();
+
+            // Render active notes if there are any
+            if (activeNotes.size > 0) {
+                renderActiveNotes(trebleStave, bassStave);
+            }
+        }
+
+        function renderActiveNotes(trebleStave, bassStave) {
+            const VF = Vex.Flow;
+            
+            // Convert Set to Array, sort from lowest to highest pitch
+            const notesArray = Array.from(activeNotes).sort((a, b) => a - b);
+
+            // Split notes at Middle C (60)
+            const trebleNotes = notesArray.filter(n => n >= 60);
+            const bassNotes = notesArray.filter(n => n < 60);
+
+            // Helper function to draw a chord on a specific stave
+            const drawChord = (midiArray, clef, stave) => {
+                if (midiArray.length === 0) return;
+
+                const keys = [];
+                const accidentals = [];
+
+                midiArray.forEach((midi, index) => {
+                    const info = getVexNoteInfo(midi);
+                    keys.push(info.key);
+                    if (info.accidental) {
+                        accidentals.push({ index, type: info.accidental });
+                    }
+                });
+
+                // Create a single StaveNote representing the chord (Whole note duration 'w')
+                const staveNote = new VF.StaveNote({ clef: clef, keys: keys, duration: 'w' });
+                
+                // Apply accidentals to the correct note within the chord
+                accidentals.forEach(acc => {
+                    staveNote.addModifier(new VF.Accidental(acc.type), acc.index);
+                });
+
+                // Format and draw
+                const voice = new VF.Voice({ num_beats: 4, beat_value: 4 }).setStrict(false);
+                voice.addTickables([staveNote]);
+                new VF.Formatter().joinVoices([voice]).format([voice], 300);
+                voice.draw(vexContext, stave);
+            };
+
+            drawChord(trebleNotes, 'treble', trebleStave);
+            drawChord(bassNotes, 'bass', bassStave);
+        }
+
+        // --- Web MIDI API Integration ---
+        function onMIDISuccess(midiAccess) {
+            statusText.textContent = "MIDI Connected. Play your keyboard!";
+            statusText.classList.replace("opacity-70", "text-green-600");
+            statusText.classList.add("dark:text-green-400");
+            connectBtn.style.display = 'none';
+
+            // Attach listeners to all available inputs
+            const inputs = midiAccess.inputs.values();
+            for (let input of inputs) {
+                input.onmidimessage = handleMIDIMessage;
+            }
+
+            // Listen for newly connected devices dynamically
+            midiAccess.onstatechange = (e) => {
+                if (e.port.type === "input" && e.port.state === "connected") {
+                    e.port.onmidimessage = handleMIDIMessage;
+                }
+            };
+        }
+
+        function onMIDIFailure() {
+            statusText.textContent = "Failed to access MIDI devices. Please check browser permissions.";
+            statusText.classList.replace("opacity-70", "text-red-600");
+        }
+
+        function handleMIDIMessage(message) {
+            const command = message.data[0];
+            const note = message.data[1];
+            const velocity = (message.data.length > 2) ? message.data[2] : 0;
+
+            // Command 144 is Note On, 128 is Note Off
+            // Some keyboards send Note On with 0 velocity instead of Note Off
+            if (command === 144 && velocity > 0) {
+                activeNotes.add(note);
+                drawStaff(); // Redraw immediately
+            } else if (command === 128 || (command === 144 && velocity === 0)) {
+                activeNotes.delete(note);
+                drawStaff(); // Redraw immediately
+            }
+        }
+
+        // --- Initialization ---
+        connectBtn.addEventListener('click', () => {
+            if (navigator.requestMIDIAccess) {
+                statusText.textContent = "Requesting MIDI access...";
+                navigator.requestMIDIAccess().then(onMIDISuccess, onMIDIFailure);
+            } else {
+                statusText.textContent = "Web MIDI is not supported in this browser.";
+                statusText.classList.replace("opacity-70", "text-red-600");
+            }
+        });
+
+        // Initialize empty staff on load
+        window.onload = initVexFlow;
+
+    </script>
+</body>
+</html>
