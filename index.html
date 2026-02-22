@@ -192,12 +192,14 @@
             const note = message.data[1];
             const velocity = (message.data.length > 2) ? message.data[2] : 0;
 
-            // Command 144 is Note On, 128 is Note Off
+            const cmd = command >> 4;
+
+            // 9 is Note On (144-159), 8 is Note Off (128-143)
             // Some keyboards send Note On with 0 velocity instead of Note Off
-            if (command === 144 && velocity > 0) {
+            if (cmd === 9 && velocity > 0) {
                 activeNotes.add(note);
                 drawStaff(); // Redraw immediately
-            } else if (command === 128 || (command === 144 && velocity === 0)) {
+            } else if (cmd === 8 || (cmd === 9 && velocity === 0)) {
                 activeNotes.delete(note);
                 drawStaff(); // Redraw immediately
             }
