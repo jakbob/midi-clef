@@ -127,8 +127,24 @@
             const trebleNotes = notesArray.filter(n => n >= 60);
             const bassNotes = notesArray.filter(n => n < 60);
 
+            // Logic for 8va (Treble): Shift down if all notes >= 86 (D6)
+            let renderTrebleNotes = trebleNotes;
+            let trebleBracket = null;
+            if (trebleNotes.length > 0 && trebleNotes.every(n => n >= 86)) {
+                renderTrebleNotes = trebleNotes.map(n => n - 12);
+                trebleBracket = '8va';
+            }
+
+            // Logic for 8vb (Bass): Shift up if all notes < 36 (C2)
+            let renderBassNotes = bassNotes;
+            let bassBracket = null;
+            if (bassNotes.length > 0 && bassNotes.every(n => n < 36)) {
+                renderBassNotes = bassNotes.map(n => n + 12);
+                bassBracket = '8vb';
+            }
+
             // Helper function to draw a chord on a specific stave
-            const drawChord = (midiArray, clef, stave) => {
+            const drawChord = (midiArray, clef, stave, bracketType = null) => {
                 if (midiArray.length === 0) return;
 
                 const keys = [];
@@ -155,10 +171,25 @@
                 voice.addTickables([staveNote]);
                 new VF.Formatter().joinVoices([voice]).format([voice], 300);
                 voice.draw(vexContext, stave);
+
+                // Draw 8va/8vb bracket if requested
+                if (bracketType) {
+                    // 1 = Top (8va), -1 = Bottom (8vb)
+                    const position = bracketType === '8va' ? 1 : -1;
+
+                    const bracket = new VF.TextBracket({
+                        start: staveNote,
+                        stop: staveNote,
+                        position: position,
+                        text: bracketType
+                    });
+
+                    bracket.setContext(vexContext).draw();
+                }
             };
 
-            drawChord(trebleNotes, 'treble', trebleStave);
-            drawChord(bassNotes, 'bass', bassStave);
+            drawChord(renderTrebleNotes, 'treble', trebleStave, trebleBracket);
+            drawChord(renderBassNotes, 'bass', bassStave, bassBracket);
         }
 
         // --- Web MIDI API Integration ---
